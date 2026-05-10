@@ -13,16 +13,12 @@ public class MecanumDriveExt {
 
     private RobotHardware robot;
 
-    // === Input curve ===
-    // Power curve exponent. 1.0 = linear. >1.0 = more gradual at low inputs.
-    private static final double INPUT_CURVE_EXP = 1.8;
-
     // === Shoot lock ===
     private boolean shootLock = false;
 
     // === Vector weight driver ===
-    private double vectorWeightX = 0.5;
-    private double vectorWeightY = 0.5;
+    private double vectorWeightX = 0;
+    private double vectorWeightY = 0;
 
     public enum DriveState {
         DRIVE,
@@ -50,7 +46,7 @@ public class MecanumDriveExt {
         if (Math.abs(raw) < robot.inputDeadzone) return 0;
         double sign = raw > 0 ? 1.0 : -1.0;
         double abs = Math.abs(raw);
-        return sign * Math.pow(abs, INPUT_CURVE_EXP);
+        return sign * Math.pow(abs, robot.inputCurveExponent);
     }
 
     // ==================== SHOOT LOCK ====================
@@ -164,9 +160,9 @@ public class MecanumDriveExt {
             y = clamp(y + vectorWeightY, -1.0, 1.0);
         }
 
-        boolean movementInput = Math.abs(x) > 0.01 ||
-                                Math.abs(y) > 0.01 ||
-                                (Math.abs(rx) > 0.01 && !isAligningActive);
+        boolean movementInput = Math.abs(x) > robot.inputDeadzone ||
+                                Math.abs(y) > robot.inputDeadzone ||
+                                (Math.abs(rx) > robot.inputDeadzone && !isAligningActive);
 
         switch (drivetrainState) {
             case DRIVE:
@@ -186,6 +182,7 @@ public class MecanumDriveExt {
                     double rotY = x * Math.sin(-botHeading) + y * Math.cos(-botHeading);
 
                     rotX = rotX * robot.driveSpeedMultiplier;
+                    rotY = rotY * robot.driveSpeedMultiplier;
 
                     double finalRx = isAligningActive ? autoAlignTurn : rx;
 

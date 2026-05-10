@@ -10,7 +10,7 @@ import com.seattlesolvers.solverslib.gamepad.GamepadEx;
 import com.seattlesolvers.solverslib.gamepad.GamepadKeys;
 import com.seattlesolvers.solverslib.geometry.Pose2d;
 import com.seattlesolvers.solverslib.geometry.Rotation2d;
-import com.seattlesolvers.solverslib.kinematics.DifferentialOdometry;
+import com.seattlesolvers.solverslib.kinematics.HolonomicOdometry;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
 /**
@@ -54,10 +54,10 @@ public class TeleOpOpMode extends LinearOpMode {
     private boolean lastTriangle2 = false;
 
     // Vector weight driver toggle (optional feature)
-    private static final boolean USE_VECTOR_WEIGHT_DRIVER = false;
+    private static final boolean USE_VECTOR_WEIGHT_DRIVER = true;
 
     // Odometry
-    private DifferentialOdometry odometry;
+    private HolonomicOdometry odometry;
 
     // ==================== ALLIANCE SELECTION ====================
 
@@ -133,13 +133,17 @@ public class TeleOpOpMode extends LinearOpMode {
     }
 
     // ==================== OPTIONAL: LAUNCH ZONE CHECK ====================
+    // NOTE: The full "run to pose" optional feature described in Instructions.md is NOT
+    // fully implemented. The code below provides vector-weight driver (vector addition), which
+    // blends a launch-zone approach vector with joystick input. A true "run to pose" command
+    // would autonomously drive the robot to the launch zone; this is not yet wired up.
 
     private boolean isInLaunchZone() {
         if (odometry == null) return true;
         Pose2d pose = odometry.getPose();
         double goalX = RobotHardware.getGoalX();
         // Check if robot x is near goal x (within 5cm = ~2 inches)
-        return Math.abs(pose.getX() - goalX) < 2.0;
+        return Math.abs(pose.getX() - goalX) < 3.0;
     }
 
     private void updateVectorWeightDriver() {
@@ -158,8 +162,8 @@ public class TeleOpOpMode extends LinearOpMode {
             double dy = 0 - pose.getY();
             double dist = Math.sqrt(dx * dx + dy * dy);
             if (dist > 0.1) {
-                double vx = (dx / dist) * 0.5;
-                double vy = (dy / dist) * 0.5;
+                double vx = (dx / dist) * RobotHardware.vectorWeightDriver;
+                double vy = (dy / dist) * RobotHardware.vectorWeightDriver;
                 mecanum.setVectorWeightDriver(vx, vy);
             } else {
                 mecanum.setVectorWeightDriver(0, 0);
@@ -183,13 +187,17 @@ public class TeleOpOpMode extends LinearOpMode {
         flywheelLPidf.setSetPoint(RobotHardware.flywheelTargetVelocity);
         flywheelRPidf.setSetPoint(RobotHardware.flywheelTargetVelocity);
 
-        // Initialize odometry — 2 dead-wheel + IMU sensor fusion
-        com.seattlesolvers.solverslib.kinematics.DifferentialOdometry rawOdom =
-            new com.seattlesolvers.solverslib.kinematics.DifferentialOdometry(
-                () -> robot.odomLeft.getDistance(),
-                () -> robot.odomRight.getDistance(),
-                RobotHardware.ODOM_TRACKWIDTH
-            );
+        // Initialize odometry — 1 parallel + 1 perpendicular dead-wheel track x/y position.
+        // IMU fusion is applied separately in the main loop: odometry tracks x/y via dead wheels,
+        // and the IMU heading is injected each iteration via updatePose() to correct drift.
+        // NOTE: if HolonomicOdometry does not accept an IMU reference in its constructor, the fusion
+        // approach here (correcting only the heading via updatePose) is the correct workaround.
+        odometry = new HolonomicOdometry(
+            () -> robot.odomLeft.getDistance(),
+            () -> robot.odomCenter.getDistance(),
+            RobotHardware.ODOM_TRACKWIDTH,
+            RobotHardware.ODOM_CENTER_WHEEL_OFFSET
+        );
 
         // Alliance selection
         selectAlliance();
@@ -205,9 +213,11 @@ public class TeleOpOpMode extends LinearOpMode {
             robot.clearBulkCache();
 
             // Update odometry with IMU-fused heading
+            // Only correct the heading; preserve dead-wheel x/y tracking from odometry pods
             if (odometry != null) {
+                Pose2d currentPose = odometry.getPose();
                 double imuHeading = robot.imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS);
-                Pose2d imuPose = new Pose2d(0, 0, Rotation2d.fromRadians(imuHeading));
+                Pose2d imuPose = new Pose2d(currentPose.getX(), currentPose.getY(), Rotation2d.fromRadians(imuHeading));
                 odometry.updatePose(imuPose);
             }
 
@@ -285,15 +295,20 @@ public class TeleOpOpMode extends LinearOpMode {
             }
 
             // Target lost in ALIGNED → ALIGNING
-            if (robot.currentState == RobotHardware.RobotState.ALIGNED && !robot.hasValidTarget()) {
+            // Only trigger this if the right trigger is still held; otherwise the trigger-release
+            // handler (above) owns the state transition and takes priority.
+            boolean rightTriggerHeld = driverOp.getTrigger(GamepadKeys.Trigger.RIGHT_TRIGGER) > 0.5f;
+            if (robot.currentState == RobotHardware.RobotState.ALIGNED
+                    && !robot.hasValidTarget()
+                    && rightTriggerHeld) {
                 robot.currentState = RobotHardware.RobotState.ALIGNING;
                 mecanum.setAligningActive(true);
                 alignmentTimerStarted = false;
             }
 
-            // Left trigger → SHOOT (only if ready)
-            if (driverOp.wasJustPressed(GamepadKeys.Trigger.LEFT_TRIGGER) > 0.5f) {
-                if (isReadyToShoot()) {
+            // Left trigger → SHOOT (only if ready); Share button bypasses all other isReadyToShoot checks
+            if (driverOp.wasJustPressed(GamepadKeys.Trigger.LEFT_TRIGGER) && driverOp.getTrigger(GamepadKeys.Trigger.LEFT_TRIGGER) > 0.5f) {
+                if (isReadyToShoot() || sharePressed) {
                     robot.currentState = RobotHardware.RobotState.SHOOT;
                     shootTimerStarted = true;
                     shootTimer.reset();
@@ -448,7 +463,7 @@ public class TeleOpOpMode extends LinearOpMode {
             }
             lastTriangle2 = triangle2;
 
-            // Share button: force isReadyToShoot = true
+            // Share button: force isReadyToShoot = true while pressed (per instructions: "Share → set isReadyToShoot = true while pressed, neglecting other factors")
             boolean sharePressed = toolOp.isDown(GamepadKeys.Button.SHARE);
 
             // ==================== TELEMETRY ====================

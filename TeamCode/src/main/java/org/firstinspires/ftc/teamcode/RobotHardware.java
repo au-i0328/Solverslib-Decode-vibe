@@ -3,15 +3,15 @@ package org.firstinspires.ftc.teamcode;
 import static com.seattlesolvers.solverslib.util.MathUtils.clamp;
 
 import com.qualcomm.hardware.lynx.LynxModule;
+import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoEx;
 import com.seattlesolvers.solverslib.controller.PIDF;
 import com.seattlesolvers.solverslib.hardware.MotorEx;
-import com.seattlesolvers.solverslib.hardware.RevIMU;
-import com.seattlesolvers.solverslib.kinematics.DifferentialOdometry;
 import com.seattlesolvers.solverslib.util.InterpLUT;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
@@ -45,9 +45,9 @@ public class RobotHardware {
     public DcMotorEx flywheelR;
     public DcMotorEx intake;
 
-    // Odometry pods — 2 dead-wheel (left + right parallel)
+    // Odometry pods — 1 parallel (left) + 1 perpendicular (center)
     public MotorEx odomLeft;   // left parallel pod
-    public MotorEx odomRight;   // right parallel pod
+    public MotorEx odomCenter;  // center perpendicular pod
 
     // ==================== SERVOS ====================
     public ServoEx hoodL;
@@ -55,7 +55,7 @@ public class RobotHardware {
     public ServoEx gate;
 
     // ==================== SENSORS ====================
-    public RevIMU imu;
+    public IMU imu;
     public HolonomicOdometry odometry;
 
     // ==================== LIMELIGHT ====================
@@ -96,7 +96,7 @@ public class RobotHardware {
     public static PIDF FLYWHEEL_R_PIDF = new PIDF(0, 0, 0, 0);
 
     // Flywheel constant target velocity (ticks/sec)
-    public static double flywheelTargetVelocity = 0;
+    public static double flywheelTargetVelocity = 3000;
     public static double readyToShootVelocityTolerance = 50;
     public static double flywheelVelocityJump = 50;
 
@@ -104,7 +104,7 @@ public class RobotHardware {
     public static double shootDelay = 2.5;
 
     // Gate servo positions
-    public static double gateOpen = 1.0;
+    public static double gateOpen = 0.5;
     public static double gateClose = 0.0;
 
     // Hood hardstops (servo position range)
@@ -120,7 +120,7 @@ public class RobotHardware {
     public static double limelightDistOffset = 0;
 
     // Hood angle jump for manual adjustment
-    public static double hoodAngleJump = 0.01;
+    public static double hoodAngleJump = 0.03;
 
     // Hood compensation coefficient for flywheel velocity drop
     public static double hoodCompensationCoefficient = 0;
@@ -129,16 +129,21 @@ public class RobotHardware {
     public static double driveStallCurrentThreshold = 0;
 
     // Alignment delay (ms) — time on target before transitioning to ALIGNED
-    public static double alignmentDelay = 500;
+    public static double alignmentDelay = 350;
 
-    // Odometry tuning constants — 2 dead-wheel + IMU fusion
+    // Odometry tuning constants — 1 parallel + 1 perpendicular dead-wheel + IMU fusion
     public static double ODOM_LEFT_WHEEL_DPP = 1.0 / 8192.0;  // distance per pulse (REV encoder)
-    public static double ODOM_RIGHT_WHEEL_DPP = 1.0 / 8192.0;
-    public static double ODOM_TRACKWIDTH = 18.0;                // inches between left and right pods
+    public static double ODOM_CENTER_WHEEL_DPP = 1.0 / 8192.0; // perpendicular pod
+    public static double ODOM_TRACKWIDTH = 18.0;               // inches between left and center pods
+    public static double ODOM_CENTER_WHEEL_OFFSET = 0.0;        // inches from robot center to perpendicular pod
 
-    // Input deadzone and drive speed multiplier
-    public static double inputDeadzone = 0.1;
+    // Input deadzone, input curve exponent, and drive speed multiplier
+    public static double inputDeadzone = 0.08;
+    public static double inputCurveExponent = 1.8;
     public static double driveSpeedMultiplier = 1.0;
+
+    // Vector weight driver magnitude (used in optional launch-zone vector-addition feature)
+    public static double vectorWeightDriver = 0.5;
 
     // ==================== AUTO-INITIALIZATION ====================
     static {
@@ -206,17 +211,16 @@ public class RobotHardware {
         intake.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         intake.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // ---- Odometry Pods (2 dead-wheel + IMU fusion) ----
-        odomLeft = new MotorEx(ahwMap, "odomLeft");
+        // ---- Odometry Pods (1 parallel + 1 perpendicular + IMU fusion) ----
+        odomLeft = new MotorEx(ahwMap, "odomPara");
         odomLeft.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         odomLeft.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         odomLeft.setDistancePerPulse(ODOM_LEFT_WHEEL_DPP);
 
-        odomRight = new MotorEx(ahwMap, "odomRight");
-        odomRight.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-        odomRight.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-        odomRight.setDistancePerPulse(ODOM_RIGHT_WHEEL_DPP);
-
+        odomCenter = new MotorEx(ahwMap, "odomPerpend");
+        odomCenter.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        odomCenter.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        odomCenter.setDistancePerPulse(ODOM_CENTER_WHEEL_DPP);
         // ---- Servos ----
         hoodL = ahwMap.get(ServoEx.class, "hoodL");
         hoodR = ahwMap.get(ServoEx.class, "hoodR");
@@ -226,8 +230,11 @@ public class RobotHardware {
         gate.setPosition(gateClose);
 
         // ---- IMU ----
-        imu = new RevIMU(ahwMap);
-        imu.init();
+        imu = ahwMap.get(IMU.class, "imu");
+        imu.initialize(new IMU.Parameters(new RevHubOrientationOnRobot(
+            RevHubOrientationOnRobot.LogoFacingDirection.UP,
+            RevHubOrientationOnRobot.UsbFacingDirection.FORWARD
+        )));
 
         // ---- Limelight ----
         limelight = ahwMap.get(Limelight3A.class, "limelight");
@@ -270,7 +277,7 @@ public class RobotHardware {
     // ==================== IMU ====================
 
     public void resetIMU() {
-        imu.reset();
+        imu.resetYaw();
     }
 
     // ==================== POWER STALL MANAGEMENT ====================
