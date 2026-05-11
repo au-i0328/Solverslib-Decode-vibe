@@ -9,7 +9,7 @@ import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.seattlesolvers.solverslib.command.CommandOpMode;
 import com.seattlesolvers.solverslib.command.InstantCommand;
 import com.seattlesolvers.solverslib.command.WaitCommand;
-import com.seattlesolvers.solverslib.pedroCommand.FollowPathCommand;
+import com.seattlesolvers.solverslib.pedrocommands.FollowPathCommand;
 import com.seattlesolvers.solverslib.util.TelemetryData;
 
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
@@ -106,12 +106,10 @@ public class PedroAutoSample extends CommandOpMode {
     public void initialize() {
         super.reset();
 
-
         // Initialize follower
         follower = Constants.createFollower(hardwareMap);
         follower.setStartingPose(startPose);
         buildPaths();
-
 
         // Schedule the autonomous sequence
         schedule(
@@ -146,13 +144,17 @@ public class PedroAutoSample extends CommandOpMode {
     }
 
     @Override
-    public void run() {
-        super.run();
+    public void preRun() {
         follower.update();
-
         telemetryData.addData("X", follower.getPose().getX());
         telemetryData.addData("Y", follower.getPose().getY());
         telemetryData.addData("Heading", follower.getPose().getHeading());
         telemetryData.update();
+    }
+
+    @Override
+    public void run() {
+        super.run();
+        follower.update();
     }
 }

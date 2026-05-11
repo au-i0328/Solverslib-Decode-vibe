@@ -2,6 +2,9 @@ package org.firstinspires.ftc.teamcode;
 
 import static com.seattlesolvers.solverslib.util.MathUtils.clamp;
 
+import com.pedropathing.follower.Follower;
+import com.pedropathing.geometry.BezierLine;
+import com.pedropathing.geometry.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
@@ -12,6 +15,7 @@ import com.seattlesolvers.solverslib.geometry.Pose2d;
 import com.seattlesolvers.solverslib.geometry.Rotation2d;
 import com.seattlesolvers.solverslib.kinematics.HolonomicOdometry;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
 /**
  * Main TeleOp OpMode for the FTC robot.
@@ -53,11 +57,11 @@ public class TeleOpOpMode extends LinearOpMode {
     private boolean lockToggled = false;
     private boolean lastTriangle2 = false;
 
-    // Vector weight driver toggle (optional feature)
-    private static final boolean USE_VECTOR_WEIGHT_DRIVER = true;
-
     // Odometry
     private HolonomicOdometry odometry;
+
+    // Pedro Pathing Follower for run-to-pose
+    private Follower follower;
 
     // ==================== ALLIANCE SELECTION ====================
 
@@ -132,41 +136,66 @@ public class TeleOpOpMode extends LinearOpMode {
         }
     }
 
-    // ==================== OPTIONAL: LAUNCH ZONE CHECK ====================
-    // NOTE: The full "run to pose" optional feature described in Instructions.md is NOT
-    // fully implemented. The code below provides vector-weight driver (vector addition), which
-    // blends a launch-zone approach vector with joystick input. A true "run to pose" command
-    // would autonomously drive the robot to the launch zone; this is not yet wired up.
+    // ==================== OPTIONAL: RUN TO POSE ====================
 
-    private boolean isInLaunchZone() {
-        if (odometry == null) return true;
-        Pose2d pose = odometry.getPose();
-        double goalX = RobotHardware.getGoalX();
-        // Check if robot x is near goal x (within 5cm = ~2 inches)
-        return Math.abs(pose.getX() - goalX) < 3.0;
+    private void runToPose(double targetX, double targetY, double targetHeading) {
+        if (follower == null) return;
+
+        // Get current pose from Pedro
+        Pose currentPose = follower.getPose();
+
+        // Create target pose
+        Pose goalPose = new Pose(targetX, targetY, Math.toRadians(targetHeading));
+
+        // Build a straight-line path from current position to target
+        com.pedropathing.paths.Path runPath = new com.pedropathing.paths.Path(
+                new BezierLine(currentPose, goalPose)
+        );
+
+        // Set heading interpolation to smoothly rotate to target heading
+        runPath.setLinearHeadingInterpolation(currentPose.getHeading(), goalPose.getHeading());
+
+        // Follow the path (don't hold at end)
+        follower.followPath(runPath);
     }
 
-    private void updateVectorWeightDriver() {
-        if (!USE_VECTOR_WEIGHT_DRIVER) return;
-        if (robot.currentState != RobotHardware.RobotState.ALIGNING) {
-            mecanum.setVectorWeightDriver(0, 0);
-            return;
-        }
-        if (isInLaunchZone()) {
-            mecanum.setVectorWeightDriver(0, 0);
-        } else {
-            // Calculate vector toward launch zone and blend with joystick
-            Pose2d pose = odometry != null ? odometry.getPose() : new Pose2d(0, 0, Rotation2d.fromDegrees(0));
+    private void updateRunToPose() {
+        if (follower == null) return;
+
+        // Update Pedro follower (always, for localization)
+        follower.update();
+
+        // Check if Pedro is following a path
+        boolean isFollowing = follower.isBusy();
+
+        // Set override on mecanum so Pedro can control motors
+        mecanum.setPedroOverride(isFollowing);
+
+        // Only pathfind when in ALIGNING state
+        if (robot.currentState == RobotHardware.RobotState.ALIGNING) {
+            // Get goal position based on alliance
             double goalX = RobotHardware.getGoalX();
-            double dx = goalX - pose.getX();
-            double dy = 0 - pose.getY();
-            double dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist > 0.1) {
-                double vx = (dx / dist) * RobotHardware.vectorWeightDriver;
-                double vy = (dy / dist) * RobotHardware.vectorWeightDriver;
-                mecanum.setVectorWeightDriver(vx, vy);
-            } else {
-                mecanum.setVectorWeightDriver(0, 0);
+            double goalY = RobotHardware.getGoalY();
+
+            // Get current pose
+            Pose currentPose = follower.getPose();
+            double dx = goalX - currentPose.getX();
+            double dy = goalY - currentPose.getY();
+            double distanceToGoal = Math.sqrt(dx * dx + dy * dy);
+
+            // Only pathfind if we're not already close to the goal
+            // and we're not currently following a path
+            if (distanceToGoal > 5.0 && !isFollowing) {
+                // Calculate target heading (pointing toward goal)
+                double targetHeading = Math.toDegrees(Math.atan2(dy, dx));
+
+                // Run to pose - this will create a path and follow it
+                runToPose(goalX, goalY, targetHeading);
+            }
+        } else {
+            // Cancel any ongoing path when not aligning
+            if (isFollowing) {
+                follower.cancelFollowing();
             }
         }
     }
@@ -178,6 +207,9 @@ public class TeleOpOpMode extends LinearOpMode {
         // Initialize hardware
         robot.initHardware(hardwareMap);
         mecanum.init(robot);
+
+        // Initialize Pedro Pathing follower for run-to-pose
+        follower = Constants.createFollower(hardwareMap);
 
         // Initialize gamepads
         driverOp = new GamepadEx(gamepad1);
@@ -346,8 +378,8 @@ public class TeleOpOpMode extends LinearOpMode {
             // Shoot lock
             mecanum.setShootLock(robot.currentState == RobotHardware.RobotState.SHOOT);
 
-            // Update vector weight driver
-            updateVectorWeightDriver();
+            // Update Pedro run-to-pose
+            updateRunToPose();
 
             // Drive
             mecanum.drive(gamepad1, imuReset);
@@ -482,6 +514,12 @@ public class TeleOpOpMode extends LinearOpMode {
             telemetry.addData("Hood Position", "%.3f", hoodPosition);
             telemetry.addData("Hood Offset", "%.3f", hoodOffset);
             telemetry.addData("Gate Position", "%.3f", robot.gate.getPosition());
+            if (follower != null) {
+                telemetry.addData("Pedro X", "%.1f", follower.getPose().getX());
+                telemetry.addData("Pedro Y", "%.1f", follower.getPose().getY());
+                telemetry.addData("Pedro Heading", "%.1f", Math.toDegrees(follower.getPose().getHeading()));
+                telemetry.addData("Pedro Busy", follower.isBusy());
+            }
             telemetry.update();
         }
 

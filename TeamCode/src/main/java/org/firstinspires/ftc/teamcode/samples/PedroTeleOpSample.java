@@ -22,20 +22,18 @@ public class PedroTeleOpSample extends CommandOpMode {
     }
 
     @Override
-    public void run() {
-        super.run();
-
-        /* Robot-Centric Drive
-        follower.setTeleOpDrive(-gamepad1.left_stick_y, -gamepad1.left_stick_x, -gamepad1.right_stick_x, true);
-        */
-
-        // Field-Centric Drive
-        follower.setTeleOpDrive(-gamepad1.left_stick_y, -gamepad1.left_stick_x, -gamepad1.right_stick_x, false);
+    public void preRun() {
         follower.update();
 
         telemetryData.addData("X", follower.getPose().getX());
         telemetryData.addData("Y", follower.getPose().getY());
         telemetryData.addData("Heading", follower.getPose().getHeading());
         telemetryData.update();
+    }
+
+    @Override
+    public void run() {
+        super.run();
+        follower.update();
     }
 }

@@ -36,6 +36,9 @@ public class MecanumDriveExt {
     private boolean lockEnabled = true;
     private boolean userWantsToMove = false;
 
+    // Pedro Pathing override - when true, don't control motors (Pedro has control)
+    private boolean pedroOverride = false;
+
     // ==================== INPUT CURVE ====================
 
     /**
@@ -104,6 +107,18 @@ public class MecanumDriveExt {
         this.userWantsToMove = wantsToMove;
     }
 
+    /**
+     * When true, MecanumDriveExt will not control the motors,
+     * allowing an external controller (like Pedro Pathing) to take over.
+     */
+    public void setPedroOverride(boolean override) {
+        this.pedroOverride = override;
+    }
+
+    public boolean isPedroOverrideActive() {
+        return pedroOverride;
+    }
+
     public void init(RobotHardware robot) {
         this.robot = robot;
     }
@@ -135,6 +150,11 @@ public class MecanumDriveExt {
     // ==================== MAIN DRIVE ====================
 
     public void drive(Gamepad gamepad1, boolean imuResetButton) {
+        // If Pedro has override, let it control the motors
+        if (pedroOverride) {
+            return;
+        }
+
         // In shoot lock state, all gamepad inputs are neglected
         if (shootLock) {
             if (drivetrainState != DriveState.LOCKED) {

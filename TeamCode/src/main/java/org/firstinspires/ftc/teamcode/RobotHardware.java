@@ -123,7 +123,7 @@ public class RobotHardware {
     public static double hoodAngleJump = 0.03;
 
     // Hood compensation coefficient for flywheel velocity drop
-    public static double hoodCompensationCoefficient = 0;
+    public static double hoodCompensationCoefficient = 0.02;
 
     // Drive stall current threshold
     public static double driveStallCurrentThreshold = 0;
